@@ -1,0 +1,43 @@
+diff --git a/drivers/input/touchscreen/goodix_berlin_driver/goodix_ts_core.c b/drivers/input/touchscreen/goodix_berlin_driver/goodix_ts_core.c
+index 1234567..abcdef0 100644
+--- a/drivers/input/touchscreen/goodix_berlin_driver/goodix_ts_core.c
++++ b/drivers/input/touchscreen/goodix_berlin_driver/goodix_ts_core.c
+@@ -1920,31 +1920,47 @@ int goodix_ts_fb_notifier_callback(struct notifier_block *self,
+-        if (fb_event && fb_event->data && core_data) {
+-                if (event == FB_EARLY_EVENT_BLANK) {
+-                        /* before fb blank */
+-                } else if (event == FB_EVENT_BLANK) {
+-                        int *blank = fb_event->data;
+-
+-                        if (*blank == FB_BLANK_UNBLANK)
+-                                goodix_ts_resume(core_data);
+-                        else if (*blank == FB_BLANK_POWERDOWN)
+-                                goodix_ts_suspend(core_data);
+-                }
+-        }
++        if (!fb_event || !fb_event->data || !core_data)
++                return 0;
++
++        /*
++         * DRM already handles suspend/resume correctly.
++         * FB notifier is kept only as fallback to avoid duplicate triggers.
++         */
++
++        if (event != FB_EVENT_BLANK)
++                return 0;
++
++        {
++                int *blank = fb_event->data;
++
++                /* prevent duplicate suspend/resume transitions */
++                if (*blank == FB_BLANK_POWERDOWN) {
++                        if (!atomic_read(&core_data->suspended))
++                                goodix_ts_suspend(core_data);
++                } else if (*blank == FB_BLANK_UNBLANK) {
++                        if (atomic_read(&core_data->suspended))
++                                goodix_ts_resume(core_data);
++                }
++        }
++
++        return 0;
+ }
