@@ -1,0 +1,110 @@
+name: Build LineageOS 23.2 Kernel (5.10 GKI)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------
+      # DEPENDENCIES
+      # -----------------------------
+      - name: Install build deps
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            bc bison flex libssl-dev make \
+            libelf-dev dwarves git python3 \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            zip rsync liblz4-tool ccache
+
+      # -----------------------------
+      # TOOLCHAIN (CLANG GKI STANDARD)
+      # -----------------------------
+      - name: Setup Clang Toolchain
+        run: |
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b \
+            clang
+
+          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
+
+      # -----------------------------
+      # ENVIRONMENT (CRITICAL FOR GKI)
+      # -----------------------------
+      - name: Set env
+        run: |
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "LLVM=1" >> $GITHUB_ENV
+          echo "LLVM_IAS=1" >> $GITHUB_ENV
+
+          echo "CROSS_COMPILE=" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=" >> $GITHUB_ENV
+
+      # -----------------------------
+      # CLEAN
+      # -----------------------------
+      - name: Clean tree
+        run: |
+          make mrproper
+          rm -rf out
+
+      # -----------------------------
+      # APPLY PATCHES (THIS FIXES YOUR GOODIX ISSUE SAFELY)
+      # -----------------------------
+      - name: Apply patches
+        run: |
+          for p in patches/*.patch; do
+            echo "Applying $p"
+            git apply "$p" || exit 1
+          done
+
+      # -----------------------------
+      # DEFCONFIG (GKI 5.10 STYLE)
+      # -----------------------------
+      - name: Build defconfig
+        run: |
+          make O=out ARCH=arm64 gki_defconfig
+
+          # device-specific overrides
+          cat avatrn.config >> out/.config || true
+
+          make O=out ARCH=arm64 olddefconfig
+
+      # -----------------------------
+      # OPTIONAL CONFIG FIXES
+      # -----------------------------
+      - name: Kernel config tweaks
+        run: |
+          ./scripts/config --file out/.config --disable CONFIG_WERROR || true
+          ./scripts/config --file out/.config --enable CONFIG_DEBUG_INFO_NONE || true
+
+      # -----------------------------
+      # BUILD
+      # -----------------------------
+      - name: Build kernel
+        run: |
+          make O=out ARCH=arm64 -j$(nproc) \
+            CC=clang \
+            LLVM=1 LLVM_IAS=1
+
+      # -----------------------------
+      # ARTIFACTS
+      # -----------------------------
+      - name: Upload kernel image
+        uses: actions/upload-artifact@v4
+        with:
+          name: avatrn-kernel-5.10
+          path: |
+            out/arch/arm64/boot/Image*
+            out/arch/arm64/boot/dtbo.img
